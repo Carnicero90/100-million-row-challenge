@@ -7,7 +7,7 @@ use Tempest\Console\HasConsole;
 use Tempest\Console\Middleware\ForceMiddleware;
 use function Tempest\Intl\Number\parse_int;
 
-final class GenerateDataCommand
+final class DataGenerateCommand
 {
     use HasConsole;
 
