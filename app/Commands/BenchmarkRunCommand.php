@@ -7,6 +7,7 @@ use Tempest\Console\ConsoleCommand;
 use Tempest\Console\HasConsole;
 use Tempest\DateTime\Duration;
 use Tempest\HttpClient\HttpClient;
+use Throwable;
 use function Tempest\env;
 
 final class BenchmarkRunCommand
@@ -53,7 +54,12 @@ final class BenchmarkRunCommand
                     $this->cache->remove(self::CACHE_KEY);
                 }
 
-                $this->run($pr);
+                try {
+                    $this->run($pr);
+                } catch (Throwable $e) {
+                    $this->error($e->getMessage());
+                }
+
                 $this->warning('Sleeping for 10 seconds…');
                 sleep(10);
             }
@@ -378,7 +384,17 @@ final class BenchmarkRunCommand
                 $messages = [
                     "You've improved your result! Have a cookie: 🍪",
                     "You've improved your result! Nice!",
+                    "Can you make it even faster?? 🏎️💨",
+                    "Benchmark says: yes. CPU says: please stop. 😅",
+                    "Milliseconds were harmed in the making of this improvement. ⏱️",
+                    "That’s a nice drop in mean time. Keep going—there’s still juice left. 🧃",
                     "Yes, this is an automated message to tell you you've improved your result. Have a star: ⭐️",
+                    "I think there's room for _one_ more improvement… 👀",
+                    "That's a mean time you've got there. 🥁",
+                    "Mean time? More like *meme* time. You're cooking. 🍳",
+                    "You shaved off time so clean it should be in a barbershop. 💈",
+                    "Leaderboard be like _cheff's kiss_ 🤌",
+                    "Mean time goes down, confidence goes up",
                 ];
 
                 $this->githubComment($prNumber, $messages[array_rand($messages)]);
