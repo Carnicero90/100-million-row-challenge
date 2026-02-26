@@ -4,30 +4,28 @@ namespace App;
 
 use function array_fill;
 use function fgets;
+use function file_get_contents;
 use function filesize;
 use function fopen;
 use function fread;
 use function fseek;
-use function ftok;
 use function ftell;
 use function fwrite;
 use function gc_disable;
+use function getmypid;
 use function implode;
 use function intdiv;
 use function ksort;
 use function pack;
 use function pcntl_fork;
 use function pcntl_waitpid;
-use function shmop_delete;
-use function shmop_open;
-use function shmop_read;
-use function shmop_write;
 use function stream_set_read_buffer;
 use function stream_set_write_buffer;
 use function strlen;
 use function strpos;
 use function strrpos;
 use function substr;
+use function unlink;
 use function unpack;
 
 use const SEEK_CUR;
@@ -82,43 +80,36 @@ final class Parser
 
         ksort($dates);
 
-        $zoneSize = $pathCount * $dateCount;
-        $zoneSizeBytes = $zoneSize * 4;
-        $totalBytes = (self::WORKERS - 1) * $zoneSizeBytes;
-
-        if ($stale = @shmop_open(ftok(__FILE__, 'p'), 'a', 0, 0)) {
-            shmop_delete($stale);
-        }
-
-        $shm = shmop_open(ftok(__FILE__, 'p'), 'n', 0644, $totalBytes);
+        $pid = getmypid();
+        $shmDir = is_dir('/dev/shm') ? '/dev/shm' : sys_get_temp_dir();
+        $shmFiles = [];
 
         $pids = [];
         for ($w = 0; $w < self::WORKERS - 1; $w++) {
-            $pid = pcntl_fork();
-            if ($pid === 0) {
-                shmop_write($shm, pack('V*', ...self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount)), $w * $zoneSizeBytes);
+            $shmFile = "{$shmDir}/parse_{$pid}_{$w}";
+            $shmFiles[] = $shmFile;
+            $childPid = pcntl_fork();
+            if ($childPid === 0) {
+                fwrite(fopen($shmFile, 'wb'), pack('V*', ...self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount)));
                 exit(0);
             }
-            $pids[] = $pid;
+            $pids[] = $childPid;
         }
 
         $merged = self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount);
 
-        foreach ($pids as $pid) {
-            pcntl_waitpid($pid, $status);
+        foreach ($pids as $childPid) {
+            pcntl_waitpid($childPid, $status);
         }
 
-
-        for ($w = 0; $w < self::WORKERS - 1; $w++) {
-            $rawData = shmop_read($shm, $w * $zoneSizeBytes, $zoneSizeBytes);
-            $wCounts = unpack('V*', $rawData);
+        foreach ($shmFiles as $shmFile) {
+            $wCounts = unpack('V*', file_get_contents($shmFile));
+            unlink($shmFile);
             $j = 0;
             foreach ($wCounts as $v) {
                 $merged[$j++] += $v;
             }
         }
-
-        shmop_delete($shm);
 
         $out = fopen($outputPath, 'wb');
         stream_set_write_buffer($out, static::BUFFER_SIZE);
