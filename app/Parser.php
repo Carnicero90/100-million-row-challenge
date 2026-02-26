@@ -35,7 +35,7 @@ use const SEEK_SET;
 
 final class Parser
 {
-    private const int WORKERS = 4;
+    private const int WORKERS = 6;
     private const int BUFFER_SIZE = 2_097_152;
 
     public function parse(string $inputPath, string $outputPath): void
@@ -60,7 +60,7 @@ final class Parser
 
         fseek($fh, 0);
 
-        $chunk = fread($fh, 8_388_608/2);
+        $chunk = fread($fh, 8_388_608);
 
         $lastNl = strrpos($chunk, "\n");
         $paths = [];
@@ -74,15 +74,8 @@ final class Parser
             $path = substr($chunk, $pos + 25, $nl - $pos - 51);
             $date = substr($chunk, $nl - 25, 10);
 
-            if (!isset($paths[$path])) {
-                $paths[$path] = $pathCount;
-                $pathCount++;
-            }
-
-            if (!isset($dates[$date])) {
-                $dates[$date] = $dateCount;
-                $dateCount++;
-            }
+            if (!isset($paths[$path])) $paths[$path] = $pathCount++;
+            if (!isset($dates[$date])) $dates[$date] = $dateCount++;
 
             $pos = $nl + 1;
         }
@@ -92,6 +85,10 @@ final class Parser
         $zoneSize = $pathCount * $dateCount;
         $zoneSizeBytes = $zoneSize * 4;
         $totalBytes = (self::WORKERS - 1) * $zoneSizeBytes;
+
+        if ($stale = @shmop_open(ftok(__FILE__, 'p'), 'a', 0, 0)) {
+            shmop_delete($stale);
+        }
 
         $shm = shmop_open(ftok(__FILE__, 'p'), 'n', 0644, $totalBytes);
 
