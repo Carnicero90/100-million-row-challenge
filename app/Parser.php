@@ -36,6 +36,7 @@ use const SEEK_SET;
 final class Parser
 {
     private const int WORKERS = 4;
+    private const int BUFFER_SIZE = 2_097_152;
 
     public function parse(string $inputPath, string $outputPath): void
     {
@@ -59,7 +60,7 @@ final class Parser
 
         fseek($fh, 0);
 
-        $chunk = fread($fh, 8_388_608);
+        $chunk = fread($fh, 8_388_608/2);
 
         $lastNl = strrpos($chunk, "\n");
         $paths = [];
@@ -98,7 +99,12 @@ final class Parser
         for ($w = 0; $w < self::WORKERS - 1; $w++) {
             $pid = pcntl_fork();
             if ($pid === 0) {
-                shmop_write($shm, pack('V*', ...self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount)), $w * $zoneSizeBytes);
+                $counts = self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount);
+                $bin = '';
+                for ($i = 0; $i < $zoneSize; $i++) {
+                    $bin .= pack('V', $counts[$i]);
+                }
+                shmop_write($shm, $bin, $w * $zoneSizeBytes);
                 exit(0);
             }
             $pids[] = $pid;
@@ -123,7 +129,7 @@ final class Parser
         shmop_delete($shm);
 
         $out = fopen($outputPath, 'wb');
-        stream_set_write_buffer($out, 0);
+        stream_set_write_buffer($out, static::BUFFER_SIZE);
         fwrite($out, '{');
 
         foreach ($paths as $path => $pOffset) {
@@ -157,7 +163,7 @@ final class Parser
         $remaining = $end - $start;
 
         while ($remaining > 0) {
-            $chunk = fread($handle, min($remaining, 8_388_608));
+            $chunk = fread($handle, min($remaining, static::BUFFER_SIZE));
             $chunkLen = strlen($chunk);
             $remaining -= $chunkLen;
 
