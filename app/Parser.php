@@ -33,8 +33,13 @@ use const SEEK_SET;
 
 final class Parser
 {
-    private const int WORKERS = 6;
-    private const int BUFFER_SIZE = 2_097_152;
+    // private const STR_LENS_FOR_DUMMIES = [
+    //     "https://stitcher.io/blog/`" => 25,
+    //     "THH:MM:SS+00:00\n" => 16,
+    //      "YYYY-MM-DD" => 10
+    // ];
+    private const int WORKERS = 8;
+    private const int BUFFER_SIZE = 8_388_608;
 
     public function parse(string $inputPath, string $outputPath): void
     {
@@ -60,22 +65,22 @@ final class Parser
 
         $chunk = fread($fh, 8_388_608);
 
-        $lastNl = strrpos($chunk, "\n");
+        $lastLineBreak = strrpos($chunk, "\n");
         $paths = [];
         $pathCount = 0;
         $dates = [];
         $dateCount = 0;
-        $pos = 0;
+        $pos = 25;
 
-        while ($pos < $lastNl) {
-            $nl = strpos($chunk, "\n", $pos + 55);
-            $path = substr($chunk, $pos + 25, $nl - $pos - 51);
-            $date = substr($chunk, $nl - 25, 10);
+        while ($pos < $lastLineBreak) {
+            $tPos = strpos($chunk, 'T', $pos);
+            $path = substr($chunk, $pos, $tPos - $pos -11 );
+            $date = substr($chunk, $tPos - 10, 10);
 
             if (!isset($paths[$path])) $paths[$path] = $pathCount++;
             if (!isset($dates[$date])) $dates[$date] = $dateCount++;
 
-            $pos = $nl + 1;
+            $pos = $tPos + 41;
         }
 
         ksort($dates);
@@ -112,7 +117,7 @@ final class Parser
         }
 
         $out = fopen($outputPath, 'wb');
-        stream_set_write_buffer($out, static::BUFFER_SIZE);
+        stream_set_write_buffer($out, 0);
         fwrite($out, '{');
 
         $offset = 0;
@@ -147,24 +152,36 @@ final class Parser
 
         $remaining = $end - $start;
 
-        while ($remaining > 0) {
-            $chunk = fread($handle, min($remaining, static::BUFFER_SIZE));
-            $chunkLen = strlen($chunk);
-            $remaining -= $chunkLen;
+        while ($remaining > static::BUFFER_SIZE) {
+            $chunk = fread($handle, static::BUFFER_SIZE);
 
-            $lastNl = strrpos($chunk, "\n");
-            if ($lastNl < ($chunkLen - 1)) {
-                $excess = $chunkLen - $lastNl - 1;
+            $remaining -= static::BUFFER_SIZE;
+
+            $lastLineBreak = strrpos($chunk, "\n");
+
+            if ($lastLineBreak < (static::BUFFER_SIZE - 1)) {
+                $excess = static::BUFFER_SIZE - 1 - $lastLineBreak;
                 fseek($handle, -$excess, SEEK_CUR);
                 $remaining += $excess;
             }
 
-            $pos = 0;
+            $pos = 25;
 
-            while ($pos < $lastNl) {
-                $nl = strpos($chunk, "\n", $pos + 55);
-                $counts[$paths[substr($chunk, $pos + 25, $nl - $pos - 51)] * $dateCount + $dates[substr($chunk, $nl - 25, 10)]]++;
-                $pos = $nl + 1;
+            while ($pos < $lastLineBreak) {
+                $tPos = strpos($chunk, 'T', $pos);
+                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 10, 10)]]++;
+                $pos = $tPos + 41;
+            }
+        }
+        if ($remaining) {
+            $chunk = fread($handle, $remaining);
+            $lastLineBreak = strlen($chunk);
+            $pos = 25;
+
+            while ($pos < $lastLineBreak) {
+                $tPos = strpos($chunk, 'T', $pos);
+                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 10, 10)]]++;
+                $pos = $tPos + 41;
             }
         }
 
