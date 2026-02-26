@@ -99,12 +99,7 @@ final class Parser
         for ($w = 0; $w < self::WORKERS - 1; $w++) {
             $pid = pcntl_fork();
             if ($pid === 0) {
-                $counts = self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount);
-                $bin = '';
-                for ($i = 0; $i < $zoneSize; $i++) {
-                    $bin .= pack('V', $counts[$i]);
-                }
-                shmop_write($shm, $bin, $w * $zoneSizeBytes);
+                shmop_write($shm, pack('V*', ...self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount)), $w * $zoneSizeBytes);
                 exit(0);
             }
             $pids[] = $pid;
@@ -132,15 +127,17 @@ final class Parser
         stream_set_write_buffer($out, static::BUFFER_SIZE);
         fwrite($out, '{');
 
-        foreach ($paths as $path => $pOffset) {
+        $offset = 0;
+        foreach ($paths as $path => $_) {
             $buf = [];
-            $pathBuf=($pOffset ? ',' : '') . "\n    \"\/blog\/{$path}\": {\n";
-            $offset = $pOffset * $dateCount;
+            $pathBuf=($offset ? ',' : '') . "\n    \"\/blog\/{$path}\": {\n";
 
-            foreach ($dates as $date => $dOffset) {
-                $count = $merged[$offset + $dOffset] and $buf[] = "        \"{$date}\": {$count},\n";
+            foreach ($dates as $date => $dateOffset) {
+                $count = $merged[$offset + $dateOffset] and $buf[] = "        \"{$date}\": {$count},\n";
             }
             $buf and fwrite($out, substr($pathBuf . implode('', $buf),0,-2) . "\n    }");
+
+            $offset += $dateCount;
         }
         fwrite($out, "\n}");
     }
