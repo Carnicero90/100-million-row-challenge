@@ -90,13 +90,12 @@ final class Parser
             $shmFiles[] = $shmFile;
             $childPid = pcntl_fork();
             if ($childPid === 0) {
-                fwrite(fopen($shmFile, 'wb'), pack('V*', ...self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount)));
+                fwrite(fopen($shmFile, 'wb'), pack('v*', ...self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount)));
                 exit(0);
             }
             $pids[] = $childPid;
         }
 
-        // --- MASTER: merge man mano che i worker finiscono ---
         $counts = array_fill(0, $pathCount * $dateCount, 0);
         $remaining = $pids;
 
@@ -104,7 +103,7 @@ final class Parser
             foreach ($remaining as $k => $childPid) {
                 $res = pcntl_waitpid($childPid, $status, WNOHANG);
                 if ($res > 0) {
-                    $wCounts = unpack('V*', file_get_contents($shmFiles[$k]));
+                    $wCounts = unpack('v*', file_get_contents($shmFiles[$k]));
                     unlink($shmFiles[$k]);
                     $j = 0;
                     foreach ($wCounts as $v) {
@@ -113,7 +112,6 @@ final class Parser
                     unset($remaining[$k]);
                 }
             }
-            if ($remaining) usleep(50);
         }
 
         $out = fopen($outputPath, 'wb');
@@ -165,8 +163,8 @@ final class Parser
                 $remaining += $excess;
             }
 
-            // trying my luck, since I could theoretically match partial lines without a trailing \n. Finger crossed.
-            preg_match_all(self::REGEXP, $chunk, $matches, PREG_SET_ORDER, 0);
+            // still trying my luck, since i guess $lastLineBreak could be false (very unlikely)
+            preg_match_all(self::REGEXP, substr($chunk, 0, $lastLineBreak + 1), $matches, PREG_SET_ORDER, 0);
             foreach ($matches as $m) {
                 $counts[$paths[$m[1]] * $dateCount + $dates[$m[2]]]++;
             }
