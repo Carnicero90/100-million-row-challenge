@@ -38,7 +38,7 @@ final class Parser
     //     "THH:MM:SS+00:00\n" => 16,
     //      "YYYY-MM-DD" => 10
     // ];
-    private const int WORKERS = 8;
+    private const int WORKERS = 10;
     private const int BUFFER_SIZE = 8_388_608;
 
     public function parse(string $inputPath, string $outputPath): void
