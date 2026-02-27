@@ -19,6 +19,7 @@ use function ksort;
 use function pack;
 use function pcntl_fork;
 use function pcntl_waitpid;
+use function preg_match_all;
 use function stream_set_read_buffer;
 use function stream_set_write_buffer;
 use function strlen;
@@ -40,6 +41,7 @@ final class Parser
     // ];
     private const int WORKERS = 8;
     private const int BUFFER_SIZE = 8_388_608;
+    private const string REGEXP = '/https:\/\/stitcher\.io\/blog\/([^,]+),(\d{4}-\d{2}-\d{2})T/';
 
     public function parse(string $inputPath, string $outputPath): void
     {
@@ -51,7 +53,6 @@ final class Parser
         $chunkSize = intdiv($fileSize, self::WORKERS);
 
         $fh = fopen($inputPath, 'rb');
-
         stream_set_read_buffer($fh, 0);
 
         for ($i = 1; $i < self::WORKERS; $i++) {
@@ -63,24 +64,17 @@ final class Parser
 
         fseek($fh, 0);
 
-        $chunk = fread($fh, 8_388_608);
+        $chunk = fread($fh, self::BUFFER_SIZE);
 
-        $lastLineBreak = strrpos($chunk, "\n");
         $paths = [];
         $pathCount = 0;
         $dates = [];
         $dateCount = 0;
-        $pos = 25;
 
-        while ($pos < $lastLineBreak) {
-            $tPos = strpos($chunk, 'T', $pos);
-            $path = substr($chunk, $pos, $tPos - $pos -11 );
-            $date = substr($chunk, $tPos - 10, 10);
-
-            if (!isset($paths[$path])) $paths[$path] = $pathCount++;
-            if (!isset($dates[$date])) $dates[$date] = $dateCount++;
-
-            $pos = $tPos + 41;
+        preg_match_all(self::REGEXP, $chunk, $matches, PREG_SET_ORDER, 0);
+        foreach ($matches as $m) {
+            if (!isset($paths[$m[1]])) $paths[$m[1]] = $pathCount++;
+            if (!isset($dates[$m[2]])) $dates[$m[2]] = $dateCount++;
         }
 
         ksort($dates);
@@ -89,8 +83,9 @@ final class Parser
         $shmDir = is_dir('/dev/shm') ? '/dev/shm' : sys_get_temp_dir();
         $shmFiles = [];
 
+        // Fork tutti i WORKERS come figli (incluso l'ultimo chunk)
         $pids = [];
-        for ($w = 0; $w < self::WORKERS - 1; $w++) {
+        for ($w = 0; $w < self::WORKERS; $w++) {
             $shmFile = "{$shmDir}/parse_{$pid}_{$w}";
             $shmFiles[] = $shmFile;
             $childPid = pcntl_fork();
@@ -101,19 +96,24 @@ final class Parser
             $pids[] = $childPid;
         }
 
-        $merged = self::parseChunk($inputPath, $bounds[$w], $bounds[$w + 1], $paths, $dates, $pathCount, $dateCount);
+        // --- MASTER: merge man mano che i worker finiscono ---
+        $counts = array_fill(0, $pathCount * $dateCount, 0);
+        $remaining = $pids;
 
-        foreach ($pids as $childPid) {
-            pcntl_waitpid($childPid, $status);
-        }
-
-        foreach ($shmFiles as $shmFile) {
-            $wCounts = unpack('V*', file_get_contents($shmFile));
-            unlink($shmFile);
-            $j = 0;
-            foreach ($wCounts as $v) {
-                $merged[$j++] += $v;
+        while ($remaining) {
+            foreach ($remaining as $k => $childPid) {
+                $res = pcntl_waitpid($childPid, $status, WNOHANG);
+                if ($res > 0) {
+                    $wCounts = unpack('V*', file_get_contents($shmFiles[$k]));
+                    unlink($shmFiles[$k]);
+                    $j = 0;
+                    foreach ($wCounts as $v) {
+                        $counts[$j++] += $v;
+                    }
+                    unset($remaining[$k]);
+                }
             }
+            if ($remaining) usleep(50);
         }
 
         $out = fopen($outputPath, 'wb');
@@ -123,12 +123,12 @@ final class Parser
         $offset = 0;
         foreach ($paths as $path => $_) {
             $buf = [];
-            $pathBuf=($offset ? ',' : '') . "\n    \"\/blog\/{$path}\": {\n";
+            $pathBuf = ($offset ? ',' : '') . "\n    \"\/blog\/{$path}\": {\n";
 
             foreach ($dates as $date => $dateOffset) {
-                $count = $merged[$offset + $dateOffset] and $buf[] = "        \"{$date}\": {$count},\n";
+                $count = $counts[$offset + $dateOffset] and $buf[] = "        \"{$date}\": {$count},\n";
             }
-            $buf and fwrite($out, substr($pathBuf . implode('', $buf),0,-2) . "\n    }");
+            $buf and fwrite($out, substr($pathBuf . implode('', $buf), 0, -2) . "\n    }");
 
             $offset += $dateCount;
         }
@@ -152,36 +152,29 @@ final class Parser
 
         $remaining = $end - $start;
 
-        while ($remaining > static::BUFFER_SIZE) {
-            $chunk = fread($handle, static::BUFFER_SIZE);
+        while ($remaining > self::BUFFER_SIZE) {
+            $chunk = fread($handle, self::BUFFER_SIZE);
 
-            $remaining -= static::BUFFER_SIZE;
+            $remaining -= self::BUFFER_SIZE;
 
             $lastLineBreak = strrpos($chunk, "\n");
 
-            if ($lastLineBreak < (static::BUFFER_SIZE - 1)) {
-                $excess = static::BUFFER_SIZE - 1 - $lastLineBreak;
+            if ($lastLineBreak < (self::BUFFER_SIZE - 1)) {
+                $excess = self::BUFFER_SIZE - 1 - $lastLineBreak;
                 fseek($handle, -$excess, SEEK_CUR);
                 $remaining += $excess;
             }
 
-            $pos = 25;
-
-            while ($pos < $lastLineBreak) {
-                $tPos = strpos($chunk, 'T', $pos);
-                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 10, 10)]]++;
-                $pos = $tPos + 41;
+            // trying my luck, since I could theoretically match partial lines without a trailing \n. Finger crossed.
+            preg_match_all(self::REGEXP, $chunk, $matches, PREG_SET_ORDER, 0);
+            foreach ($matches as $m) {
+                $counts[$paths[$m[1]] * $dateCount + $dates[$m[2]]]++;
             }
         }
         if ($remaining) {
-            $chunk = fread($handle, $remaining);
-            $lastLineBreak = strlen($chunk);
-            $pos = 25;
-
-            while ($pos < $lastLineBreak) {
-                $tPos = strpos($chunk, 'T', $pos);
-                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 10, 10)]]++;
-                $pos = $tPos + 41;
+            preg_match_all(self::REGEXP, fread($handle, $remaining), $matches, PREG_SET_ORDER, 0);
+            foreach ($matches as $m) {
+                $counts[$paths[$m[1]] * $dateCount + $dates[$m[2]]]++;
             }
         }
 
