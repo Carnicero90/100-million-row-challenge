@@ -41,7 +41,7 @@ final class Parser
     // ];
     private const int WORKERS = 8;
     private const int BUFFER_SIZE = 8_388_608;
-    private const string REGEXP = '/https:\/\/stitcher\.io\/blog\/([^,]+),(\d{4}-\d{2}-\d{2})T/';
+    private const string REGEXP = '/\/blog\/([^,]++),([^T]++)T/';
 
     public function parse(string $inputPath, string $outputPath): void
     {
