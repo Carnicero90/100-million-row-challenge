@@ -70,12 +70,12 @@ final class Parser
         $pathCount = 0;
         $pos = 25;
         $tPos = strpos($chunk, 'T', $pos);
-        $minDate = substr($chunk, $tPos - 10, 10);
+        $minDate = substr($chunk, $tPos - 7, 7);
 
         while ($pos < $lastLineBreak) {
             $tPos = strpos($chunk, 'T', $pos);
-            $path = substr($chunk, $pos, $tPos - $pos -11 );
-            $date = substr($chunk, $tPos - 10, 10);
+            $path = substr($chunk, $pos, $tPos - $pos - 11);
+            $date = substr($chunk, $tPos - 7, 7);
 
             if (!isset($paths[$path])) $paths[$path] = $pathCount++;
             $minDate = min($date, $minDate);
@@ -87,11 +87,19 @@ final class Parser
 
         $dateCount = ((strtotime($minDate)+$fiveYearsInSeconds) - strtotime($minDate)) / 86400 + 1;
         $matrixSize = $dateCount * $pathCount;
-        $minDate = strtotime($minDate);
+
+        $cy = (int)$minDate[0] + 2020;
+        $cm = (int)substr($minDate, 2, 2);
+        $cd = (int)substr($minDate, 5, 2);
+        $minDate = strtotime('202' . $minDate);
 
         $dates = [];
         for ($i = 0; $i < $dateCount; $i++) {
-            $dates[gmdate('Y-m-d', $minDate + $i * 86400)] = $i;
+            $dates[($cy % 10) . '-' . ($cm < 10 ? '0' : '') . $cm . '-' . ($cd < 10 ? '0' : '') . $cd] = $i;
+            $dim = $cm === 2
+                ? ($cy % 4 === 0 && ($cy % 100 !== 0 || $cy % 400 === 0) ? 29 : 28)
+                : ($cm === 4 || $cm === 6 || $cm === 9 || $cm === 11 ? 30 : 31);
+            if (++$cd > $dim) { $cd = 1; if (++$cm > 12) { $cm = 1; ++$cy; } }
         }
 
         $pid = getmypid();
@@ -136,7 +144,7 @@ final class Parser
         $buf = [];
         for ($j = 0; $j < $dateCount; $j++) {
             if ($c=$merged[$j]) {
-                $buf[] = "        \"{$dateStrings[$j]}\": {$c},\n";
+                $buf[] = "        \"202{$dateStrings[$j]}\": {$c},\n";
             }
         }
         if ($buf) {
@@ -152,7 +160,7 @@ final class Parser
 
             for ($j = 0; $j < $dateCount; $j++) {
                 if ($c=$merged[$i+$j]) {
-                    $buf[] = "        \"{$dateStrings[$j]}\": {$c},\n";
+                    $buf[] = "        \"202{$dateStrings[$j]}\": {$c},\n";
                 }
             }
 
@@ -198,7 +206,7 @@ final class Parser
 
             while ($pos < $lastLineBreak) {
                 $tPos = strpos($chunk, 'T', $pos);
-                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 10, 10)]]++;
+                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 7, 7)]]++;
                 $pos = $tPos + 41;
             }
         }
@@ -209,7 +217,7 @@ final class Parser
 
             while ($pos < $lastLineBreak) {
                 $tPos = strpos($chunk, 'T', $pos);
-                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 10, 10)]]++;
+                $counts[$paths[substr($chunk, $pos, $tPos - $pos - 11)] * $dateCount + $dates[substr($chunk, $tPos - 7, 7)]]++;
                 $pos = $tPos + 41;
             }
         }
